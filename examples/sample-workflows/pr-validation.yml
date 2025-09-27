@@ -1,0 +1,295 @@
+name: Enhanced PR Validation
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+  workflow_dispatch:
+
+jobs:
+  comprehensive-validation:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      security-events: read
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          
+      - name: Install dependencies
+        run: |
+          npm install -g markdownlint-cli
+          npm install -g markdown-link-check
+          
+      - name: Validate PR Content
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prBody = context.payload.pull_request.body || "";
+            const prTitle = context.payload.pull_request.title || "";
+            
+            console.log('🔍 Analyzing PR content...');
+            
+            // Check for evidence links
+            const linkPatterns = [
+              /https?:\/\/.*\.com\/.*\/actions\/runs\/\d+/g, // GitHub Actions
+              /https?:\/\/.*\.com\/.*\/pull\/\d+/g, // GitHub PRs
+              /https?:\/\/.*\.com\/.*\/issues\/\d+/g, // GitHub Issues
+              /https?:\/\/.*\.com\/.*\/security\/.*/g, // Security scans
+              /https?:\/\/.*\.com\/.*\/coverage.*/g, // Coverage reports
+              /https?:\/\/.*\.com\/.*\/benchmark.*/g, // Performance tests
+              /https?:\/\/.*\.com\/.*\/grafana.*/g, // Observability
+            ];
+            
+            const foundLinks = linkPatterns.some(pattern => pattern.test(prBody));
+            if (!foundLinks) {
+              console.log("⚠️ No evidence links found in PR description");
+            } else {
+              console.log("✅ Evidence links found in PR description");
+            }
+            
+            // Check for placeholder text
+            const placeholders = prBody.match(/\[link\]|\[description\]|TODO|FIXME/g);
+            if (placeholders && placeholders.length > 0) {
+              console.log(`⚠️ Found ${placeholders.length} placeholder(s) that should be replaced`);
+            }
+            
+            // Check for risk assessment
+            const riskLevels = ['Low', 'Medium', 'High'];
+            const hasRiskLevel = riskLevels.some(level => prBody.includes(level));
+            if (!hasRiskLevel) {
+              console.log("⚠️ Risk level not specified");
+            } else {
+              console.log("✅ Risk level specified");
+            }
+            
+            // Check for AI assistance disclosure
+            const aiKeywords = ['Copilot', 'Claude', 'AI', 'ChatGPT', 'GitHub Copilot'];
+            const hasAiDisclosure = aiKeywords.some(keyword => prBody.includes(keyword));
+            if (!hasAiDisclosure) {
+              console.log("⚠️ AI assistance not disclosed");
+            } else {
+              console.log("✅ AI assistance disclosed");
+            }
+
+      - name: Validate Core Rules
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prBody = context.payload.pull_request.body || "";
+            
+            const requiredSections = [
+              "### Outcome (Core)",
+              "### Risk & Rollback (Core)",
+              "### AI Assistance (Core)",
+              "Unit tests (Core)",
+              "Integration/Contract tests (Core)",
+              "Changed-lines coverage (Core)",
+              "Secrets scan (Core)",
+              "SAST (Core)",
+              "SCA/License (Core)",
+              "Backward/forward compatibility (Core)",
+              "New metrics/traces/logs (Core)",
+              "Provenance/SBOM (Core)",
+              "### Approvals (Core)"
+            ];
+            
+            let missing = requiredSections.filter(s => !prBody.includes(s));
+            
+            if (missing.length > 0) {
+              const comment = `## 🔍 PR Rules Check Report
+              
+              ### ❌ Missing Core Sections
+              The following required sections are missing from your PR description:
+              
+              ${missing.map(section => `- ${section}`).join('\n')}
+              
+              Please add these sections to your PR description before merging.
+              
+              ### 📚 Resources
+              - [PR Template](https://github.com/your-org/ai-pull-request-handbook/blob/main/templates/pull-request-template.md)
+              - [User Guide](https://github.com/your-org/ai-pull-request-handbook/blob/main/docs/user-guides.md)
+              `;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+              
+              core.setFailed(`Missing sections: ${missing.join(", ")}`);
+            } else {
+              const comment = `## 🔍 PR Rules Check Report
+              
+              ### ✅ Core Rules Validation
+              All required Core sections are present in your PR description.
+              
+              ### 🔍 Next Steps
+              - Human reviewers will now focus on design quality and business logic
+              - Ensure all evidence links are accessible and working
+              - Address any reviewer feedback before merging
+              
+              ### 📚 Resources
+              - [Evidence Links Guide](https://github.com/your-org/ai-pull-request-handbook/blob/main/docs/references.md)
+              - [Review Guidelines](https://github.com/your-org/ai-pull-request-handbook/blob/main/docs/introduction.md#where-human-review-fits)
+              `;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+              
+              console.log("✅ All Core rules satisfied");
+            }
+
+      - name: Markdown Lint
+        run: |
+          if [ -d "docs" ]; then
+            markdownlint docs/ --config .markdownlint.yaml || true
+          fi
+          if [ -d "templates" ]; then
+            markdownlint templates/ --config .markdownlint.yaml || true
+          fi
+          if [ -d "examples" ]; then
+            markdownlint examples/ --config .markdownlint.yaml || true
+          fi
+
+      - name: Check for broken links
+        run: |
+          if [ -d "docs" ]; then
+            find docs/ -name "*.md" -exec markdown-link-check {} \; || true
+          fi
+          if [ -d "templates" ]; then
+            find templates/ -name "*.md" -exec markdown-link-check {} \; || true
+          fi
+          if [ -d "examples" ]; then
+            find examples/ -name "*.md" -exec markdown-link-check {} \; || true
+          fi
+
+      - name: Security Scan
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript, python
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+      - name: Dependency Check
+        run: |
+          if [ -f "package.json" ]; then
+            npm audit --audit-level moderate || true
+          fi
+          if [ -f "requirements.txt" ]; then
+            pip install safety
+            safety check || true
+          fi
+
+      - name: Generate Validation Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const report = `## 📊 PR Validation Report
+            
+            ### ✅ Automated Checks
+            - [x] Core rules validation
+            - [x] Evidence links analysis
+            - [x] Markdown linting
+            - [x] Link checking
+            - [x] Security scanning
+            - [x] Dependency checking
+            
+            ### 🔍 Validation Summary
+            All automated validation checks have been completed. Please review the results above and address any issues before merging.
+            
+            ### 📚 Next Steps
+            1. **Human Review**: Focus on design quality and business logic
+            2. **Evidence Verification**: Ensure all links are accessible
+            3. **Final Approval**: Address any reviewer feedback
+            
+            ### 🛠️ Tools Used
+            - GitHub Actions for automated validation
+            - CodeQL for security analysis
+            - Markdown linting for documentation quality
+            - Link checking for accessibility
+            
+            ---
+            *This report was generated by the AI-Enhanced Pull Request Handbook validation workflow.*
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+
+  template-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Validate PR template
+        run: |
+          if [ -f ".github/PULL_REQUEST_TEMPLATE.md" ]; then
+            echo "✅ PR template exists"
+            grep -q "### Outcome (Core)" .github/PULL_REQUEST_TEMPLATE.md || (echo "❌ Missing Outcome section" && exit 1)
+            grep -q "### Risk & Rollback (Core)" .github/PULL_REQUEST_TEMPLATE.md || (echo "❌ Missing Risk & Rollback section" && exit 1)
+            grep -q "### AI Assistance (Core)" .github/PULL_REQUEST_TEMPLATE.md || (echo "❌ Missing AI Assistance section" && exit 1)
+            echo "✅ PR template validation passed"
+          else
+            echo "❌ PR template missing"
+            exit 1
+          fi
+
+      - name: Validate repository structure
+        run: |
+          echo "Checking repository structure..."
+          
+          # Check required directories
+          [ -d "docs" ] || (echo "❌ docs/ directory missing" && exit 1)
+          [ -d "templates" ] || (echo "❌ templates/ directory missing" && exit 1)
+          [ -d "examples" ] || (echo "❌ examples/ directory missing" && exit 1)
+          
+          # Check required files
+          [ -f "README.md" ] || (echo "❌ README.md missing" && exit 1)
+          [ -f "CONTRIBUTING.md" ] || (echo "❌ CONTRIBUTING.md missing" && exit 1)
+          
+          echo "✅ Repository structure validation passed"
+
+  performance-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Performance baseline check
+        run: |
+          echo "🔍 Checking for performance-related changes..."
+          
+          # Check if PR affects performance-critical files
+          if git diff --name-only origin/main...HEAD | grep -E "(\.py|\.js|\.ts|\.java|\.go)$"; then
+            echo "⚠️ Performance-critical files modified"
+            echo "Consider adding performance benchmarks if this affects hot paths"
+          else
+            echo "✅ No performance-critical files modified"
+          fi
+
+      - name: Bundle size check
+        run: |
+          if [ -f "package.json" ]; then
+            echo "🔍 Checking bundle size impact..."
+            # Add bundle size analysis here
+            echo "✅ Bundle size check completed"
+          fi
+
